@@ -418,3 +418,8 @@ def main():
                 value=total_wah,
                 delta=f"{(total_wah / (total_on_site + total_wah) * 100):.1f}%" if (total_on_site + total_wah) > 0 else "0%"
             )
+# ============================================================================
+# RUN THE APPLICATION
+# ============================================================================
+if __name__ == "__main__":
+    main()

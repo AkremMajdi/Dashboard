@@ -72,7 +72,7 @@ st.markdown("""
 @st.cache_data
 def load_data():
     """Load and process the Excel data."""
-    file_path = ' DATA assessement.xlsx'
+    file_path = 'DATA assessement.xlsx'
     
     # Load schedules
     schedules_raw = pd.read_excel(file_path, sheet_name='W14 schedule', header=None)

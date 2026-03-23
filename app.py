@@ -223,7 +223,7 @@ def main():
     # ========================================================================
     # HEADER
     # ========================================================================
-    st.markdown('<div class="main-header">📊 RTA User Dashboard & Logistics Tracker</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">📊 Data Assessment Dashboard</div>', unsafe_allow_html=True)
     st.markdown("---")
     
     # ========================================================================

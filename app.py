@@ -72,7 +72,7 @@ st.markdown("""
 @st.cache_data
 def load_data():
     """Load and process the Excel data."""
-    file_path = 'DATA assessement.xlsx'
+    file_path = '/home/ubuntu/upload/DATAassessement.xlsx'
     
     # Load schedules
     schedules_raw = pd.read_excel(file_path, sheet_name='W14 schedule', header=None)
@@ -148,6 +148,45 @@ def process_schedule_data(schedules_data, credentials, dates):
     return pd.DataFrame(schedule_records)
 
 # ============================================================================
+# WORK LOCATION MODIFICATIONS MANAGEMENT
+# ============================================================================
+def get_work_location_modifications():
+    """Get or initialize the work location modifications dictionary."""
+    if 'work_location_mods' not in st.session_state:
+        st.session_state.work_location_mods = {}
+    return st.session_state.work_location_mods
+
+def update_work_location(mat, date_obj, new_location):
+    """Update the work location for a specific agent on a specific date."""
+    mods = get_work_location_modifications()
+    key = f"{mat}_{date_obj}"
+    mods[key] = new_location
+    st.session_state.work_location_mods = mods
+
+def get_work_location(mat, date_obj, original_location):
+    """Get the current work location (modified or original)."""
+    mods = get_work_location_modifications()
+    key = f"{mat}_{date_obj}"
+    return mods.get(key, original_location)
+
+def apply_work_location_modifications(schedule_df):
+    """Apply all work location modifications to the schedule dataframe."""
+    modified_df = schedule_df.copy()
+    mods = get_work_location_modifications()
+    
+    for key, new_location in mods.items():
+        mat, date_str = key.rsplit('_', 1)
+        try:
+            mat = int(mat)
+            date_obj = pd.to_datetime(date_str).date()
+            mask = (modified_df['MAT'] == mat) & (modified_df['Date'] == date_obj)
+            modified_df.loc[mask, 'Work Location'] = new_location
+        except:
+            pass
+    
+    return modified_df
+
+# ============================================================================
 # REFLECTOR (AUDIT LOG) MANAGEMENT
 # ============================================================================
 def get_reflector_data():
@@ -177,6 +216,9 @@ def main():
     # Load data
     schedules_data, credentials, dates = load_data()
     schedule_df = process_schedule_data(schedules_data, credentials, dates)
+    
+    # Apply any existing work location modifications
+    schedule_df = apply_work_location_modifications(schedule_df)
     
     # ========================================================================
     # HEADER
@@ -255,15 +297,20 @@ def main():
                 
                 with col3:
                     work_location_options = ['On-Site', 'Work-at-Home (W@H)', 'Rest/Off', 'Leave (CP)']
+                    current_location = get_work_location(row['MAT'], row['Date'], row['Work Location'])
                     selected_location = st.selectbox(
                         f"Location for {row['MAT']}",
                         options=work_location_options,
-                        index=work_location_options.index(row['Work Location']) if row['Work Location'] in work_location_options else 0,
-                        key=f"location_{row['MAT']}"
+                        index=work_location_options.index(current_location) if current_location in work_location_options else 0,
+                        key=f"location_{row['MAT']}_{row['Date']}"
                     )
+                    
+                    # Update the modification when selection changes
+                    if selected_location != row['Work Location']:
+                        update_work_location(row['MAT'], row['Date'], selected_location)
                 
                 with col4:
-                    if st.checkbox(f"Log {row['MAT']}", key=f"log_{row['MAT']}"):
+                    if st.checkbox(f"Log {row['MAT']}", key=f"log_{row['MAT']}_{row['Date']}"):
                         log_to_reflector(
                             mat=row['MAT'],
                             full_name=row['Full Name'],
@@ -284,7 +331,7 @@ def main():
     with tab2:
         st.markdown('<div class="section-header">Weekly Transport Requirements & KPIs</div>', unsafe_allow_html=True)
         
-        # Filter for the entire week
+        # Use the modified schedule_df (with work location changes applied)
         week_df = schedule_df.copy()
         
         # Identify shifts that qualify for transport (08:00, 09:00, 10:00)
@@ -295,7 +342,7 @@ def main():
         wah_by_day = []
         days_list = []
         
-        for day in sorted(schedule_df['Date'].unique()):
+        for day in sorted(week_df['Date'].unique()):
             day_data = week_df[week_df['Date'] == day]
             
             # Count On-Site agents
@@ -371,85 +418,3 @@ def main():
                 value=total_wah,
                 delta=f"{(total_wah / (total_on_site + total_wah) * 100):.1f}%" if (total_on_site + total_wah) > 0 else "0%"
             )
-        
-        with col3:
-            avg_on_site = np.mean(on_site_by_day) if on_site_by_day else 0
-            st.metric(
-                label="Avg Daily On-Site",
-                value=f"{avg_on_site:.1f}",
-                delta="agents/day"
-            )
-        
-        with col4:
-            avg_wah = np.mean(wah_by_day) if wah_by_day else 0
-            st.metric(
-                label="Avg Daily W@H",
-                value=f"{avg_wah:.1f}",
-                delta="agents/day"
-            )
-        
-        # Transport Boucles Analysis
-        st.markdown('<div class="section-header">Transport Boucles Analysis</div>', unsafe_allow_html=True)
-        
-        # Count agents by Boucle and work location
-        boucle_analysis = week_df[week_df['Work Location'] == 'On-Site'].groupby('Boucle').size().reset_index(name='Count')
-        boucle_analysis = boucle_analysis.sort_values('Count', ascending=False)
-        
-        if len(boucle_analysis) > 0:
-            fig_boucles = px.bar(
-                boucle_analysis,
-                x='Boucle',
-                y='Count',
-                title='On-Site Agents by Transport Boucle',
-                labels={'Count': 'Number of Agents', 'Boucle': 'Boucle (Transport Route)'},
-                color='Count',
-                color_continuous_scale='Blues'
-            )
-            fig_boucles.update_layout(height=400)
-            st.plotly_chart(fig_boucles, use_container_width=True)
-            
-            st.dataframe(boucle_analysis, use_container_width=True, hide_index=True)
-        else:
-            st.info("No on-site agents found for the selected period.")
-    
-    # ========================================================================
-    # TAB 3: REFLECTOR (AUDIT LOG)
-    # ========================================================================
-    with tab3:
-        st.markdown('<div class="section-header">Reflector: Audit Log of All Selections</div>', unsafe_allow_html=True)
-        
-        reflector_data = get_reflector_data()
-        
-        if len(reflector_data) == 0:
-            st.info("No selections logged yet. Use the Agent Dashboard to log selections.")
-        else:
-            reflector_df = pd.DataFrame(reflector_data)
-            
-            # Display the reflector table
-            st.subheader("Complete Audit Trail")
-            st.dataframe(reflector_df, use_container_width=True, hide_index=True)
-            
-            # Export reflector data
-            csv = reflector_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Reflector Data as CSV",
-                data=csv,
-                file_name=f"reflector_audit_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-            
-            # Summary statistics
-            st.subheader("Reflector Summary")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Entries", len(reflector_df))
-            
-            with col2:
-                st.metric("Unique Agents", reflector_df['MAT'].nunique())
-            
-            with col3:
-                st.metric("Unique Managers", reflector_df['Manager'].nunique())
-
-if __name__ == "__main__":
-    main()
